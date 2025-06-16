@@ -952,8 +952,12 @@ func TestSingleEdit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup instrumentation %s", err)
 	}
+	ctx = util.WithInstrumentation(ctx, instrumentation)
 
-	go watchFile(ctx, fileToWatch, instrumentation)
+	mockServer := &server.Server{}
+	mockCfg := &server.ServerConfig{}
+
+	go watchFile(ctx, fileToWatch, mockCfg, mockServer)
 
 	// escape backslash so regex doesn't fail on windows filepaths
 	regexEscapedPath := strings.ReplaceAll(fileToWatch, `\`, `\\\\*\\`)
@@ -1133,6 +1137,89 @@ func TestUpdateLogLevel(t *testing.T) {
 			got := updateLogLevel(tc.stdio, tc.logLevel)
 			if got != tc.want {
 				t.Fatalf("incorrect indication to update log level: got %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUpdateCfg(t *testing.T) {
+	ctx, err := testutils.ContextWithNewLogger()
+	if err != nil {
+		t.Fatalf("unexpected error setting up context: %s", err)
+	}
+	tcs := []struct {
+		desc      string
+		cfg       server.ServerConfig
+		toolsFile ToolsFile
+		want      server.ServerConfig
+	}{
+		{
+			desc: "update all configs",
+			cfg:  server.ServerConfig{},
+			toolsFile: ToolsFile{
+				Sources: server.SourceConfigs{
+					"test-source": cloudsqlpgsrc.Config{
+						Name: "test-source",
+					},
+				},
+				AuthServices: server.AuthServiceConfigs{
+					"test-auth": google.Config{
+						Name: "test-auth",
+					},
+				},
+				Tools: server.ToolConfigs{
+					"test-tool": postgressql.Config{
+						Name: "test-tool",
+					},
+				},
+				Toolsets: server.ToolsetConfigs{
+					"test-toolset": tools.ToolsetConfig{
+						Name: "test-toolset",
+					},
+				},
+			},
+			want: server.ServerConfig{
+				SourceConfigs: server.SourceConfigs{
+					"test-source": cloudsqlpgsrc.Config{
+						Name: "test-source",
+					},
+				},
+				AuthServiceConfigs: server.AuthServiceConfigs{
+					"test-auth": google.Config{
+						Name: "test-auth",
+					},
+				},
+				ToolConfigs: server.ToolConfigs{
+					"test-tool": postgressql.Config{
+						Name: "test-tool",
+					},
+				},
+				ToolsetConfigs: server.ToolsetConfigs{
+					"test-toolset": tools.ToolsetConfig{
+						Name: "test-toolset",
+					},
+				},
+			},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.desc, func(t *testing.T) {
+			err := updateCfg(ctx, tc.toolsFile, &tc.cfg)
+			if err != nil {
+				t.Fatalf("unexpected error %s: ", err)
+			}
+
+			if !cmp.Equal(tc.cfg.SourceConfigs, tc.want.SourceConfigs) {
+				t.Errorf("SourceConfigs mismatch: got %v, want %v", tc.cfg.SourceConfigs, tc.want.SourceConfigs)
+			}
+			if !cmp.Equal(tc.cfg.AuthServiceConfigs, tc.want.AuthServiceConfigs) {
+				t.Errorf("AuthServiceConfigs mismatch: got %v, want %v", tc.cfg.AuthServiceConfigs, tc.want.AuthServiceConfigs)
+			}
+			if !cmp.Equal(tc.cfg.ToolConfigs, tc.want.ToolConfigs) {
+				t.Errorf("ToolConfigs mismatch: got %v, want %v", tc.cfg.ToolConfigs, tc.want.ToolConfigs)
+			}
+			if !cmp.Equal(tc.cfg.ToolsetConfigs, tc.want.ToolsetConfigs) {
+				t.Errorf("ToolsetConfigs mismatch: got %v, want %v", tc.cfg.ToolsetConfigs, tc.want.ToolsetConfigs)
 			}
 		})
 	}

@@ -226,6 +226,43 @@ func parseToolsFile(ctx context.Context, raw []byte) (ToolsFile, error) {
 	return toolsFile, nil
 }
 
+func handleDynamicReload(ctx context.Context, buf []byte, cfg *server.ServerConfig, s *server.Server) error {
+	logger, err := util.LoggerFromContext(ctx)
+	if err != nil {
+		panic(fmt.Errorf("unable to extract logger from context %w", err))
+	}
+
+	toolsFile, err := parseToolsFile(ctx, buf)
+	if err != nil {
+		errMsg := fmt.Errorf("unable to parse reloaded tools file: %w", err)
+		logger.WarnContext(ctx, errMsg.Error())
+		return err
+	}
+
+	sourcesMap, authServicesMap, toolsMap, toolsetsMap, err := validateReloadEdits(ctx, toolsFile)
+	if err != nil {
+		errMsg := fmt.Errorf("unable to validate reloaded edits: %w", err)
+		logger.WarnContext(ctx, errMsg.Error())
+		return err
+	}
+
+	err = updateCfg(ctx, toolsFile, cfg)
+	if err != nil {
+		errMsg := fmt.Errorf("unable to update server after reload: %w", err)
+		logger.WarnContext(ctx, errMsg.Error())
+		return err
+	}
+
+	err = server.UpdateServer(ctx, s, sourcesMap, authServicesMap, toolsMap, toolsetsMap)
+	if err != nil {
+		errMsg := fmt.Errorf("unable to update server after reload: %w", err)
+		logger.WarnContext(ctx, errMsg.Error())
+		return err
+	}
+
+	return nil
+}
+
 func validateReloadEdits(
 	ctx context.Context, toolsFile ToolsFile,
 ) (map[string]sources.Source, map[string]auth.AuthService, map[string]tools.Tool, map[string]tools.Toolset, error,
@@ -261,10 +298,26 @@ func validateReloadEdits(
 	}
 
 	return sourcesMap, authServicesMap, toolsMap, toolsetsMap, nil
+
+}
+
+func updateCfg(ctx context.Context, toolsFile ToolsFile, cfg *server.ServerConfig) error {
+	logger, err := util.LoggerFromContext(ctx)
+	if err != nil {
+		panic("attempted to parse logger when not in context")
+	}
+
+	cfg.SourceConfigs, cfg.AuthServiceConfigs, cfg.ToolConfigs, cfg.ToolsetConfigs = toolsFile.Sources, toolsFile.AuthServices, toolsFile.Tools, toolsFile.Toolsets
+	authSourceConfigs := toolsFile.AuthSources
+	if authSourceConfigs != nil {
+		logger.WarnContext(ctx, "`authSources` is deprecated, use `authServices` instead")
+		cfg.AuthServiceConfigs = authSourceConfigs
+	}
+	return nil
 }
 
 // watchFile checks for changes in the provided yaml tools file.
-func watchFile(ctx context.Context, toolsFileName string, instrumentation *telemetry.Instrumentation) {
+func watchFile(ctx context.Context, toolsFileName string, cfg *server.ServerConfig, s *server.Server) {
 	logger, err := util.LoggerFromContext(ctx)
 	if err != nil {
 		panic(fmt.Errorf("unable to extract logger from context %w", err))
@@ -326,17 +379,9 @@ func watchFile(ctx context.Context, toolsFileName string, instrumentation *telem
 				continue
 			}
 
-			toolsFile, err := parseToolsFile(ctx, buf)
+			err = handleDynamicReload(ctx, buf, cfg, s)
 			if err != nil {
 				errMsg := fmt.Errorf("unable to parse reloaded tools file at %q: %w", toolsFileName, err)
-				logger.WarnContext(ctx, errMsg.Error())
-				continue
-			}
-
-			// TODO: will update when updateServer() function is added to use return values
-			_, _, _, _, err = validateReloadEdits(ctx, toolsFile)
-			if err != nil {
-				errMsg := fmt.Errorf("unable to validate reloaded edits: %w", err)
 				logger.WarnContext(ctx, errMsg.Error())
 				continue
 			}
@@ -513,7 +558,7 @@ func run(cmd *Command) error {
 	}
 
 	// start watching for file changes to trigger dynamic reloading
-	go watchFile(ctx, cmd.tools_file, instrumentation)
+	go watchFile(ctx, cmd.tools_file, &cmd.cfg, s)
 
 	// wait for either the server to error out or the command's context to be canceled
 	select {
