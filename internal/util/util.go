@@ -21,6 +21,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	yaml "github.com/goccy/go-yaml"
 	"github.com/googleapis/genai-toolbox/internal/log"
+	"github.com/googleapis/genai-toolbox/internal/telemetry"
 )
 
 var _ yaml.InterfaceUnmarshalerContext = &DelayedUnmarshaler{}
@@ -90,6 +91,21 @@ func WithLogger(ctx context.Context, logger log.Logger) context.Context {
 func LoggerFromContext(ctx context.Context) (log.Logger, error) {
 	if logger, ok := ctx.Value(loggerKey).(log.Logger); ok {
 		return logger, nil
+	}
+	return nil, fmt.Errorf("unable to retrieve logger")
+}
+
+const instrumentationKey contextKey = "instrumentation"
+
+// WithInstrumentation adds an instrumentation into the context as a value
+func WithInstrumentation(ctx context.Context, instrumentation *telemetry.Instrumentation) context.Context {
+	return context.WithValue(ctx, instrumentationKey, instrumentation)
+}
+
+// InstrumentationFromContext retreives the instrumentation or return an error
+func InstrumentationFromContext(ctx context.Context) (*telemetry.Instrumentation, error) {
+	if instrumentation, ok := ctx.Value(instrumentationKey).(*telemetry.Instrumentation); ok {
+		return instrumentation, nil
 	}
 	return nil, fmt.Errorf("unable to retrieve logger")
 }

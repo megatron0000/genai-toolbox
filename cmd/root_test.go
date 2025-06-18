@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"regexp"
 	"runtime"
 	"strings"
@@ -35,6 +36,7 @@ import (
 	"github.com/googleapis/genai-toolbox/internal/server"
 	cloudsqlpgsrc "github.com/googleapis/genai-toolbox/internal/sources/cloudsqlpg"
 	httpsrc "github.com/googleapis/genai-toolbox/internal/sources/http"
+	"github.com/googleapis/genai-toolbox/internal/telemetry"
 	"github.com/googleapis/genai-toolbox/internal/testutils"
 	"github.com/googleapis/genai-toolbox/internal/tools"
 	"github.com/googleapis/genai-toolbox/internal/tools/http"
@@ -944,12 +946,20 @@ func TestSingleEdit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to setup logger %s", err)
 	}
-
 	ctx = util.WithLogger(ctx, logger)
 
-	go watchFile(ctx, fileToWatch)
+	instrumentation, err := telemetry.CreateTelemetryInstrumentation(versionString)
+	if err != nil {
+		t.Fatalf("failed to setup instrumentation %s", err)
+	}
 
-	begunWatchingFile := regexp.MustCompile(fmt.Sprintf("DEBUG \"Now watching tools file %s\"", fileToWatch))
+	go watchFile(ctx, fileToWatch, instrumentation)
+
+	// escape backslash so regex doesn't fail on windows filepaths
+	regexEscapedPath := strings.ReplaceAll(fileToWatch, `\`, `\\\\*\\`)
+	regexEscapedPath = path.Clean(regexEscapedPath)
+
+	begunWatchingFile := regexp.MustCompile(fmt.Sprintf(`DEBUG "Now watching tools file %s"`, regexEscapedPath))
 	_, err = testutils.WaitForString(ctx, begunWatchingFile, pr)
 	if err != nil {
 		t.Fatalf("timeout or error waiting for watcher to start: %s", err)
@@ -960,7 +970,7 @@ func TestSingleEdit(t *testing.T) {
 		t.Fatalf("error writing to file: %v", err)
 	}
 
-	detectedFileChange := regexp.MustCompile(fmt.Sprintf("DEBUG \"WRITE event detected in tools file: %s", fileToWatch))
+	detectedFileChange := regexp.MustCompile(fmt.Sprintf(`DEBUG "WRITE event detected in tools file: %s"`, regexEscapedPath))
 	_, err = testutils.WaitForString(ctx, detectedFileChange, pr)
 	if err != nil {
 		t.Fatalf("timeout or error waiting for file to detect write: %s", err)
